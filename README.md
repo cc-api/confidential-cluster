@@ -29,7 +29,7 @@ and quote (report).
 | Resource | [N2D(AMD EPYC)](https://cloud.google.com/compute/docs/general-purpose-machines#n2d_machines)/[C3(Intel Sapphire Rapids)](https://cloud.google.com/compute/docs/general-purpose-machines#c3_series) | DCasv5/ECasv5(AMD), [DCesv5/ECesv5(Intel)](https://learn.microsoft.com/en-us/azure/virtual-machines/ecesv5-ecedsv5-series) |
 | OS       | [CentOS/ContainerOS/Debian/Fedora/RHEL/...](https://cloud.google.com/compute/docs/images/os-details#limited_operating_system_support) | Ubuntu Server 22.04 LTS/SUSE Linux Enterprise Server/Red Hat Enterprise Linux |
 | CPU Accelerator | [AMX](https://cloud.google.com/compute/docs/cpu-platforms#intel-amx) | AMX |
-| Full Disk Encryption | Yes(https://cloud.google.com/compute/docs/disks/customer-managed-encryption) | [Yes](https://learn.microsoft.com/en-us/azure/virtual-machines/disk-encryption-overview) |
+| Full Disk Encryption | [Yes](https://cloud.google.com/compute/docs/disks/customer-managed-encryption) | [Yes](https://learn.microsoft.com/en-us/azure/virtual-machines/disk-encryption-overview) |
 | Key | customer-managed encryption keys (CMEK) | PMK (platform-managed key) and CMK (customer-managed key) |
 | Attestation | [Google Managed vTPM](https://cloud.google.com/confidential-computing/confidential-vm/docs/attestation) | [Microsoft Azure Attestation](https://azure.microsoft.com/en-us/products/azure-attestation/)/[Intel® Trust Authority](https://www.intel.com/content/www/us/en/security/trust-authority.html) |
 | Tutorial | [Here](https://cloud.google.com/kubernetes-engine/docs/how-to/confidential-gke-nodes#enabling_in_a_new_cluster) | [here](https://learn.microsoft.com/en-us/azure/confidential-computing/confidential-vm-overview)
