@@ -20,4 +20,19 @@ POD and cluster level.
 - **CC Trusted API** provided unified API to tenant to access measurement, event log
 and quote (report).
 
-## 2. Deploy
+## 2. Confidential Cluster
+
+### 2.1 Existing CSPs
+
+|          | Google GKE    |
+| -------- | ------------- |
+| Resource | [N2D(AMD EPYC)](https://cloud.google.com/compute/docs/general-purpose-machines#n2d_machines)/[C3(Intel Sapphire Rapids)](https://cloud.google.com/compute/docs/general-purpose-machines#c3_series) |
+| OS       | [CentOS/Container OS](https://cloud.google.com/compute/docs/images/os-details#limited_operating_system_support) |
+| CPU Accelerator | [AMX](https://cloud.google.com/compute/docs/cpu-platforms#intel-amx) |
+| Key | customer-managed encryption keys (CMEK) |
+| Attestation | [Google Managed vTPM](https://cloud.google.com/confidential-computing/confidential-vm/docs/attestation) |
+| Tutorial | [Here](https://cloud.google.com/kubernetes-engine/docs/how-to/confidential-gke-nodes#enabling_in_a_new_cluster) |
+
+
+
+## 3. Deploy
