@@ -17,7 +17,7 @@ In above diagram:
 
 - **CCNP** is used to calculate the measurement for node, namespace,
 POD and cluster level.
-- **CC Trusted API** provided unified API to tenant to access measurement, event log
+- **CC Trusted API** provides unified API to tenant to access measurement, event log
 and quote (report).
 
 ## 2. Confidential Cluster
@@ -34,4 +34,14 @@ and quote (report).
 | Attestation | [Google Managed vTPM](https://cloud.google.com/confidential-computing/confidential-vm/docs/attestation) | [Microsoft Azure Attestation](https://azure.microsoft.com/en-us/products/azure-attestation/)/[Intel® Trust Authority](https://www.intel.com/content/www/us/en/security/trust-authority.html) |
 | Tutorial | [Here](https://cloud.google.com/kubernetes-engine/docs/how-to/confidential-gke-nodes#enabling_in_a_new_cluster) | [here](https://learn.microsoft.com/en-us/azure/confidential-computing/confidential-vm-overview)
 
-## 3. Deploy
+## 3. Deployment
+
+There are 2 options creating a confidential cluster.
+
+- Create a few confidential VMs (CVMs) and deploy Kubernetes within them. The CVMs can be on local hosts if you have supported hardware. The CVMs can also be applied from CSP.
+The document [single_node_gcp.md](./deployment/single_node_gcp.md) shows how to apply for a TD on Google Cloud TDX Preview and start a Kubernetes cluster in the single
+confidential node.
+- Create [Confidential GKE node](https://cloud.google.com/blog/products/identity-security/announcing-general-availability-of-confidential-gke-nodes) on Google cloud.
+
+
+Find details in [deployment guide](./deployment/).
