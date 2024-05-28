@@ -24,13 +24,17 @@ __NOTE: The following steps need to be performed in a session in which `gcloud i
 2. Reserve an external IP for the TD. Otherwise you cannot ssh it. You can find your `ProjectID` in the page of Google Cloud [console](https://console.cloud.google.com/).
 
   ```
+  # create an external IP
   $ gcloud compute addresses create <IP NAME> --project=<YOUR PROJECT ID> --region=us-central1
+
+  # get the external IP
+  $ gcloud compute addresses list | grep <IP NAME> | awk '{print $2}'
   ```
 
 3. Use [gcp_td.sh](./gcp_td.sh) to create a TD.
 
   ```
-  $ ./gcp_td.sh -i <projectID> -n <vm name> -e <external IP from last step> -k <content of public key>
+  $ ./gcp_td.sh -i <projectID> -n <vm name> -e <external IP from step 2> -u <ssh username> -k <content of public key from step 1>
   ```
 __NOTE: The script uses image ubuntu-2204-jammy-v20240501. Find all TDX supported operating system image in the [document](https://cloud.google.com/confidential-computing/confidential-vm/docs/supported-configurations#operating-systems)__.
 
@@ -61,14 +65,15 @@ After that, you can view the TD in Google Cloud Console - Compute Engine - Virtu
 
 ```
 $ vi ~/.ssh/config
-Host cvm
+Host td
     HostName <Replace with external IP of the TD>
+    User <ssh username>
     Port 22
     PreferredAuthentications publickey
     IdentityFile <Replace with path of ssh private key>
     ProxyCommand connect-proxy -S <Replace with your proxy>:1080 %h %p
 
-$ ssh cvm
+$ ssh td
 ```
 
 ## Install Kubernetes
@@ -81,6 +86,11 @@ Use below command to start a lightweight Kubernetes cluster using k3s.
 $ curl -sfL https://get.k3s.io | sh -
 ```
 
+After k3s service is up successfully, run below command.
+
+```
+$ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+```
 Check node status with below command. You can see current node status is ready.
 
 ```
