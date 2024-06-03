@@ -76,6 +76,32 @@ Host td
 $ ssh td
 ```
 
+## Gather Measurement, Event log and Quote
+
+[CC Trusted API](https://github.com/cc-api/cc-trusted-api) and [VMSDK](https://github.com/cc-api/cc-trusted-vmsdk) supports to gather measurement, event logs for the TD via vTPM. Getting quote via vTPM will be supported later. 
+
+Please refer to the [steps](https://github.com/cc-api/cc-trusted-vmsdk) to check the measurement and event logs via vTPM.
+
+Please run below steps in the TD to get quote using Intel [ITA client](https://github.com/intel/trustauthority-client-for-go/tree/gcp-tdx-preview/tdx-cli).
+
+ - Follow the [guide](https://cloud.google.com/confidential-computing/confidential-vm/docs/attestation#intel_tdx_on_ubuntu) to enable `tdx_guest` module. 
+
+ - Reboot the TD to make sure the module is loaded.
+
+ - Get quote via ITA client.
+
+  ```
+  $ curl -L https://github.com/intel/trustauthority-client-for-go/releases/download/v1.2.1/trustauthority-cli-gcp-v1.2.1.tar.gz -o trustauthority-cli.tar.gz
+
+  $ tar xvf trustauthority-cli.tar.gz
+
+  $ sudo apt install build-essential
+  $ sudo snap install go --classic
+
+  $ sudo ./trustauthority-cli quote
+  ```
+  
+
 ## Install Kubernetes
 
 It's recommended to use [k3s](https://docs.k3s.io/) to start a lightweight Kubernetes cluster for experimental purpose. Or you can refer to the [Kubernetes official documentation](https://kubernetes.io/docs/home/) to setup a cluster.
