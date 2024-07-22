@@ -41,7 +41,7 @@ There are 3 options creating a confidential cluster.
 - Create a few confidential VMs (CVMs) and deploy Kubernetes within them. The CVMs can be on local hosts if you have supported hardware. The CVMs can also be applied from CSP.
 The document [csp_cvm.md](./deployment/csp_cvm.md) shows how to apply for a TD on Google Cloud or Azure and start a Kubernetes cluster in the single confidential node.
 - Create [Confidential GKE node](https://cloud.google.com/blog/products/identity-security/announcing-general-availability-of-confidential-gke-nodes) on Google cloud.
-- Create a Constellation based confidential cluster on top of a TDX machine.
+- Create a Constellation based confidential cluster on top of a TDX machine. Follow the steps [here](./deployment/constellation.md) to deploy the cluster.
 
 
-Find details in [deployment guide](./deployment/).
+Find details in [deployment guide](./deployment/Constellation/constellation.md).
