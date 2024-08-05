@@ -28,15 +28,42 @@ To leverage bare metal TDX machine to build up Constellation cluster, user need 
 
 ### Step 1: Clone Constellation repo and apply patches.
 
+Apply the patch to enable qemu-tdx within TDX bare-metal host using qemu.
+
+The patch focusing on enabling the qemu-tdx option within Constellation.
+
+The support for TDX attestation is done through the [go-tdx-qpl](https://github.com/Ruoyu-y/go-tdx-qpl) library which is a fork of Edgeless Sys's [go-tdx-qpl](https://github.com/edgelesssys/go-tdx-qpl) library. Most of the changes focusing the support of TDX 1.5 attestation and verifications. Since Constellation needs to specify the version and hash of dependencies within the code, these changes are directly applied within the patch.
+
 ```bash
 # clone the constellation repo and apply patches.
 git clone https://github.com/edgelesssys/constellation.git
 git checkout fe65a6da76d03f0bed841ae36f33ff22d2567700
 git checkout -b constellation-qemu-tdx
-git apply constellation_qemu_tdx.patch
+git apply ./constellation_qemu_tdx.patch
 ```
 
 ### (Optional) Step 2: Setup proxy if required
+If user are building and running the confidential cluster under proxy, some files need to be modified to bypass the proxy issues.
+
+Here listed the files that need to be modified:
+```
+# Add proxy setting to the files as environment variables
+# e.g. add lines 'export http_proxy=<your_proxy>' to export http_proxy, https_proxy and no_proxy in the script
+image/base/mkosi.skeleton/etc/profile.d/constellation.sh
+
+# Add extra 'env' section in the configuration
+# e.g. env = {"HTTP_PROXY": <your_proxy>, "HTTPS_PROXY": <your_proxy>, "NO_PROXY": <your_proxy>}
+image/system/BUILD.bazel
+
+# Add proxy as environment variables under the service section
+# e.g. Environment="HTTP_PROXY=<your_proxy>". Add http_proxy, https_proxy and no_proxy
+image/base/mkosi.skeleton/usr/lib/systemd/system/containerd.service.d/local.conf
+image/base/mkosi.skeleton/usr/lib/systemd/system/kubelet.service
+
+# Add proxy during execution
+# e.g. ExecStart=/bin/bash -c "echo http_proxy=<your_proxy> >> /run/constellation.env". Echo http_proxy, https_proxy and no_proxy in the file.
+image/sysroot-tree/usr/lib/systemd/system/configure-constel-csp.service
+```
 
 ### Step 3: Build Constellation image for QEMU-TDX option
 Build a Constellation image that works for QEMU-TDX option.
@@ -80,6 +107,8 @@ User need to modify the configuration before starting up the cluster. Modificati
 2. change the value of `libvirtSocket` to `qemu:///system` or path to local QEMU socket to leverage the local QEMU instead of docker.
 3. check the value of `metadataAPIServer` and make sure it equals to the value you just pushed in the CLI generation step.
 4. change the measurements of TDX like what shows in the picture
+
+<img src="../../docs/constellation_config_setting.png" alt="measurement setting in constellation-conf.yaml" width="700" height="200">
 
 User could then use the simple command to start up the Constellation confidential cluster.
 ```bash
