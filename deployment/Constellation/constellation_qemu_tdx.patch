@@ -1,0 +1,608 @@
+From b4692b8970ebc86747bc041caa130e9337a00560 Mon Sep 17 00:00:00 2001
+From: Ruoyu Ying <ruoyu.ying@intel.com>
+Date: Mon, 5 Aug 2024 15:17:59 +0800
+Subject: [PATCH] qemu-tdx: support option 'qemu-tdx' in constellation
+
+* support constellation deployment on bare-metal TDX machine using
+  option 'qemu-tdx'
+
+Signed-off-by: Ruoyu Ying <ruoyu.ying@intel.com>
+---
+ bazel/toolchains/go_module_deps.bzl           | 34 +++++++++++++++--
+ cli/internal/cloudcmd/tfvars.go               |  6 +++
+ go.mod                                        |  6 ++-
+ go.sum                                        | 12 +++++-
+ .../usr/lib/systemd/system/kubelet.service    |  1 +
+ image/system/variants.bzl                     |  9 +++++
+ internal/attestation/attestation.go           |  8 ++--
+ internal/attestation/initialize/BUILD.bazel   |  2 +-
+ internal/attestation/initialize/initialize.go | 12 ++++--
+ internal/attestation/tdx/BUILD.bazel          |  6 +--
+ internal/attestation/tdx/issuer.go            |  4 +-
+ internal/attestation/tdx/tdx.go               | 25 ++++++++++---
+ internal/attestation/tdx/validator.go         |  4 +-
+ internal/attestation/variant/variant.go       |  2 +-
+ internal/config/config.go                     |  6 +++
+ internal/config/validation.go                 |  8 +++-
+ .../qemu/modules/instance_group/main.tf       |  8 ++--
+ .../modules/instance_group/tdx_domain.xsl     | 37 ++++++++++++++-----
+ terraform/infrastructure/qemu/outputs.tf      | 16 ++++----
+ 19 files changed, 156 insertions(+), 50 deletions(-)
+
+diff --git a/bazel/toolchains/go_module_deps.bzl b/bazel/toolchains/go_module_deps.bzl
+index a95194d23..6d47334ff 100644
+--- a/bazel/toolchains/go_module_deps.bzl
++++ b/bazel/toolchains/go_module_deps.bzl
+@@ -1409,12 +1409,12 @@ def go_dependencies():
+         version = "v0.0.0-20240513062303-05f8770a633d",
+     )
+     go_repository(
+-        name = "com_github_edgelesssys_go_tdx_qpl",
++        name = "com_github_Ruoyu-y_go_tdx_qpl",
+         build_file_generation = "on",
+         build_file_proto_mode = "disable_global",
+-        importpath = "github.com/edgelesssys/go-tdx-qpl",
+-        sum = "h1:TCGUmmH50cQBGXPJsn32APf93fmWQXcSMi7pMbDPtV0=",
+-        version = "v0.0.0-20240123150912-dcad3c41ec5f",
++        importpath = "github.com/Ruoyu-y/go-tdx-qpl",
++        sum = "h1:V20ZcC5Hz/84OJovLSm0J+uAfS2TuEvJG/UIgYRk76k=",
++        version = "v0.0.0-20240730013531-9e0d36f055d8",
+     )
+     go_repository(
+         name = "com_github_eggsampler_acme_v3",
+@@ -7236,3 +7236,29 @@ def go_dependencies():
+         sum = "h1:Ci3iUJyx9UeRx7CeFN8ARgGbkESwJK+KB9lLcWxY/Zw=",
+         version = "v2.4.0",
+     )
++    go_repository(
++        name = "cc_api_cc_trusted_vmsdk",
++        build_file_generation = "on",
++        build_file_proto_mode = "disable_global",
++        importpath = "github.com/cc-api/cc-trusted-vmsdk/src/golang/cctrusted_vm",
++        sum = "h1:CYPI9/gwWzxn8ywlEPzEZqwYv8yZArGpJAkgsnHXRr8=",
++        version = "v0.0.0-20240730011201-862206e5bd59",
++    )
++    go_repository(
++        name = "com_github_cc_api_evidence_api_common_golang_evidence_api",
++        build_file_generation = "on",
++        build_file_proto_mode = "disable_global",
++        importpath = "github.com/cc-api/evidence-api/common/golang/evidence_api",
++        sum = "h1:IjmvJTssPaDuC/qkSDaLFv6u+9MFFH+nmTr4Duj6KhM=",
++        version = "v0.0.0-20240729064808-21e12aa810c8",
++    )
++    go_repository(
++        name = "com_github_mdlayher_vsock",
++        build_file_generation = "on",
++        build_file_proto_mode = "disable_global",
++        importpath = "github.com/mdlayher/vsock",
++        sum = "h1:pC1mTJTvjo1r9n9fbm7S1j04rCgCzhCOS5DY0zqHlnQ=",
++        version = "v1.2.1",
++    )
++
++
+diff --git a/cli/internal/cloudcmd/tfvars.go b/cli/internal/cloudcmd/tfvars.go
+index 50df8dbcc..97da80fc8 100644
+--- a/cli/internal/cloudcmd/tfvars.go
++++ b/cli/internal/cloudcmd/tfvars.go
+@@ -333,6 +333,12 @@ func qemuTerraformVars(
+ 		}
+ 	}
+ 
++	// prepare boot mode according to attestation variant
++	bootMode := "uefi"
++	if conf.Attestation.QEMUTDX != nil {
++		bootMode = "direct-linux-boot"
++	}
++
+ 	metadataLibvirtURI := libvirtURI
+ 	if libvirtSocketPath != "." {
+ 		metadataLibvirtURI = "qemu:///system"
+diff --git a/go.mod b/go.mod
+index feba121f5..a0cd5e1fa 100644
+--- a/go.mod
++++ b/go.mod
+@@ -54,6 +54,7 @@ require (
+ 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.1.0
+ 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.3.2
+ 	github.com/BurntSushi/toml v1.3.2
++	github.com/Ruoyu-y/go-tdx-qpl v0.0.0-20240722062019-ac6f93ac6558
+ 	github.com/aws/aws-sdk-go v1.53.0
+ 	github.com/aws/aws-sdk-go-v2 v1.26.1
+ 	github.com/aws/aws-sdk-go-v2/config v1.27.13
+@@ -73,7 +74,6 @@ require (
+ 	github.com/coreos/go-systemd/v22 v22.5.0
+ 	github.com/docker/docker v26.1.2+incompatible
+ 	github.com/edgelesssys/go-azguestattestation v0.0.0-20240513062303-05f8770a633d
+-	github.com/edgelesssys/go-tdx-qpl v0.0.0-20240123150912-dcad3c41ec5f
+ 	github.com/foxboron/go-uefi v0.0.0-20240128152106-48be911532c2
+ 	github.com/fsnotify/fsnotify v1.7.0
+ 	github.com/go-playground/locales v0.14.1
+@@ -202,6 +202,8 @@ require (
+ 	github.com/beorn7/perks v1.0.1 // indirect
+ 	github.com/blang/semver v3.5.1+incompatible // indirect
+ 	github.com/blang/semver/v4 v4.0.0 // indirect
++	github.com/cc-api/cc-trusted-vmsdk/src/golang/cctrusted_vm v0.0.0-20240730011201-862206e5bd59 // indirect
++	github.com/cc-api/evidence-api/common/golang/evidence_api v0.0.0-20240729064808-21e12aa810c8 // indirect
+ 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
+ 	github.com/chai2010/gettext-go v1.0.2 // indirect
+ 	github.com/cloudflare/circl v1.3.7 // indirect
+@@ -303,6 +305,8 @@ require (
+ 	github.com/mailru/easyjson v0.7.7 // indirect
+ 	github.com/mattn/go-colorable v0.1.13 // indirect
+ 	github.com/mattn/go-runewidth v0.0.13 // indirect
++	github.com/mdlayher/socket v0.5.1 // indirect
++	github.com/mdlayher/vsock v1.2.1 // indirect
+ 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
+ 	github.com/mitchellh/copystructure v1.2.0 // indirect
+ 	github.com/mitchellh/go-testing-interface v1.14.1 // indirect
+diff --git a/go.sum b/go.sum
+index b4fc2ac44..8fff3a9b4 100644
+--- a/go.sum
++++ b/go.sum
+@@ -101,6 +101,8 @@ github.com/Microsoft/hcsshim v0.11.4 h1:68vKo2VN8DE9AdN4tnkWnmdhqdbpUFM8OF3Airm7
+ github.com/Microsoft/hcsshim v0.11.4/go.mod h1:smjE4dvqPX9Zldna+t5FG3rnoHhaB7QYxPRqGcpAD9w=
+ github.com/ProtonMail/go-crypto v1.1.0-alpha.2 h1:bkyFVUP+ROOARdgCiJzNQo2V2kiB97LyUpzH9P6Hrlg=
+ github.com/ProtonMail/go-crypto v1.1.0-alpha.2/go.mod h1:rA3QumHc/FZ8pAHreoekgiAbzpNsfQAosU5td4SnOrE=
++github.com/Ruoyu-y/go-tdx-qpl v0.0.0-20240722062019-ac6f93ac6558 h1:FZSzMYWl3jAPeTpn+iJwuwBAE7kBQKY31NxmwXl0MxE=
++github.com/Ruoyu-y/go-tdx-qpl v0.0.0-20240722062019-ac6f93ac6558/go.mod h1:InH5Rs9J5LYlL9TXTduuVxm87ya02jkTn9JwUTPehz4=
+ github.com/Shopify/logrus-bugsnag v0.0.0-20171204204709-577dee27f20d h1:UrqY+r/OJnIp5u0s1SbQ8dVfLCZJsnvazdBP5hS4iRs=
+ github.com/Shopify/logrus-bugsnag v0.0.0-20171204204709-577dee27f20d/go.mod h1:HI8ITrYtUY+O+ZhtlqUnD8+KwNPOyugEhfP9fdUIaEQ=
+ github.com/agext/levenshtein v1.2.2 h1:0S/Yg6LYmFJ5stwQeRp6EeOcCbj7xiqQSdNelsXvaqE=
+@@ -191,6 +193,10 @@ github.com/bugsnag/osext v0.0.0-20130617224835-0dd3f918b21b h1:otBG+dV+YK+Soembj
+ github.com/bugsnag/osext v0.0.0-20130617224835-0dd3f918b21b/go.mod h1:obH5gd0BsqsP2LwDJ9aOkm/6J86V6lyAXCoQWGw3K50=
+ github.com/bugsnag/panicwrap v0.0.0-20151223152923-e2c28503fcd0 h1:nvj0OLI3YqYXer/kZD8Ri1aaunCxIEsOst1BVJswV0o=
+ github.com/bugsnag/panicwrap v0.0.0-20151223152923-e2c28503fcd0/go.mod h1:D/8v3kj0zr8ZAKg1AQ6crr+5VwKN5eIywRkfhyM/+dE=
++github.com/cc-api/cc-trusted-vmsdk/src/golang/cctrusted_vm v0.0.0-20240730011201-862206e5bd59 h1:CYPI9/gwWzxn8ywlEPzEZqwYv8yZArGpJAkgsnHXRr8=
++github.com/cc-api/cc-trusted-vmsdk/src/golang/cctrusted_vm v0.0.0-20240730011201-862206e5bd59/go.mod h1:3g+ZHQ8Gb78lRXUaaEB5MwioiJGxlPnQCqwY7sq3+to=
++github.com/cc-api/evidence-api/common/golang/evidence_api v0.0.0-20240729064808-21e12aa810c8 h1:IjmvJTssPaDuC/qkSDaLFv6u+9MFFH+nmTr4Duj6KhM=
++github.com/cc-api/evidence-api/common/golang/evidence_api v0.0.0-20240729064808-21e12aa810c8/go.mod h1:R1LPex62L4Ftnnw5vWp5sFNI5j8tnHtf0oQKvLvm9Pw=
+ github.com/cenkalti/backoff/v4 v4.2.1 h1:y4OZtCnogmCPw98Zjyt5a6+QwPLGkiQsYW5oUqylYbM=
+ github.com/cenkalti/backoff/v4 v4.2.1/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
+ github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
+@@ -260,8 +266,6 @@ github.com/docker/libtrust v0.0.0-20160708172513-aabc10ec26b7 h1:UhxFibDNY/bfvqU
+ github.com/docker/libtrust v0.0.0-20160708172513-aabc10ec26b7/go.mod h1:cyGadeNEkKy96OOhEzfZl+yxihPEzKnqJwvfuSUqbZE=
+ github.com/edgelesssys/go-azguestattestation v0.0.0-20240513062303-05f8770a633d h1:XcoMVhZve0RRkSxFDn9Bs/z4FpHqZ3eHgVNWNCNOkqc=
+ github.com/edgelesssys/go-azguestattestation v0.0.0-20240513062303-05f8770a633d/go.mod h1:Lz4QaomI4wU2YbatD4/W7vatW2Q35tnkoJezB1clscc=
+-github.com/edgelesssys/go-tdx-qpl v0.0.0-20240123150912-dcad3c41ec5f h1:TCGUmmH50cQBGXPJsn32APf93fmWQXcSMi7pMbDPtV0=
+-github.com/edgelesssys/go-tdx-qpl v0.0.0-20240123150912-dcad3c41ec5f/go.mod h1:IC72qyykUIWl0ZmSk53L4xbLCFDBEGZVaujUmPQOEyw=
+ github.com/emicklei/go-restful/v3 v3.11.0 h1:rAQeMHw1c7zTmncogyy8VvRZwtkmkZ4FxERmMY4rD+g=
+ github.com/emicklei/go-restful/v3 v3.11.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
+ github.com/emirpasic/gods v1.18.1 h1:FXtiHYKDGKCW2KzwZKx0iC0PQmdlorYgdFG9jPXJ1Bc=
+@@ -633,6 +637,10 @@ github.com/mattn/go-sqlite3 v1.14.6/go.mod h1:NyWgC/yNuGj7Q9rpYnZvas74GogHl5/Z4A
+ github.com/mattn/go-sqlite3 v1.14.22 h1:2gZY6PC6kBnID23Tichd1K+Z0oS6nE/XwU+Vz/5o4kU=
+ github.com/mattn/go-sqlite3 v1.14.22/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
+ github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
++github.com/mdlayher/socket v0.5.1 h1:VZaqt6RkGkt2OE9l3GcC6nZkqD3xKeQLyfleW/uBcos=
++github.com/mdlayher/socket v0.5.1/go.mod h1:TjPLHI1UgwEv5J1B5q0zTZq12A/6H7nKmtTanQE37IQ=
++github.com/mdlayher/vsock v1.2.1 h1:pC1mTJTvjo1r9n9fbm7S1j04rCgCzhCOS5DY0zqHlnQ=
++github.com/mdlayher/vsock v1.2.1/go.mod h1:NRfCibel++DgeMD8z/hP+PPTjlNJsdPOmxcnENvE+SE=
+ github.com/miekg/dns v1.1.55 h1:GoQ4hpsj0nFLYe+bWiCToyrBEJXkQfOOIvFGFy0lEgo=
+ github.com/miekg/dns v1.1.55/go.mod h1:uInx36IzPl7FYnDcMeVWxj9byh7DutNykX4G9Sj60FY=
+ github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db h1:62I3jR2EmQ4l5rM/4FEfDWcRD+abF5XlKShorW5LRoQ=
+diff --git a/image/base/mkosi.skeleton/usr/lib/systemd/system/kubelet.service b/image/base/mkosi.skeleton/usr/lib/systemd/system/kubelet.service
+index bfe1b8b85..2b6ff21c9 100644
+--- a/image/base/mkosi.skeleton/usr/lib/systemd/system/kubelet.service
++++ b/image/base/mkosi.skeleton/usr/lib/systemd/system/kubelet.service
+@@ -9,6 +9,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
+ Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
+ # This is a file that "kubeadm init" and "kubeadm join" generates at runtime, populating the KUBELET_KUBEADM_ARGS variable dynamically
+ EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
++EnvironmentFile=/run/constellation.env
+ # This is a file that the user can use for overrides of the kubelet args as a last resort. Preferably, the user should use
+ # the .NodeRegistration.KubeletExtraArgs object in the configuration files instead. KUBELET_EXTRA_ARGS should be sourced from this file.
+ EnvironmentFile=-/etc/default/kubelet
+diff --git a/image/system/variants.bzl b/image/system/variants.bzl
+index 3cca05c95..93fd0ec68 100644
+--- a/image/system/variants.bzl
++++ b/image/system/variants.bzl
+@@ -33,6 +33,10 @@ VARIANTS = [
+         "attestation_variant": "qemu-vtpm",
+         "csp": "qemu",
+     },
++    {
++        "attestation_variant": "qemu-tdx",
++        "csp": "qemu",
++    },
+ ]
+ 
+ STREAMS = [
+@@ -132,6 +136,11 @@ attestation_variant_settings = {
+             "constel.attestation-variant": "qemu-vtpm",
+         },
+     },
++    "qemu-tdx": {
++        "kernel_command_line_dict": {
++            "constel.attestation-variant": "qemu-tdx",
++        },
++    },
+ }
+ 
+ stream_settings = {
+diff --git a/internal/attestation/attestation.go b/internal/attestation/attestation.go
+index d5e458012..49230bc52 100644
+--- a/internal/attestation/attestation.go
++++ b/internal/attestation/attestation.go
+@@ -30,7 +30,7 @@ package attestation
+ 
+ import (
+ 	"bytes"
+-	"crypto/sha256"
++	"crypto/sha512"
+ 
+ 	"github.com/edgelesssys/constellation/v2/internal/crypto"
+ )
+@@ -65,9 +65,9 @@ func DeriveClusterID(secret, salt []byte) ([]byte, error) {
+ 
+ // MakeExtraData binds userData to a random nonce used in attestation.
+ func MakeExtraData(userData []byte, nonce []byte) []byte {
+-	data := append([]byte{}, userData...)
+-	data = append(data, nonce...)
+-	digest := sha256.Sum256(data)
++	data := append([]byte{}, nonce...)
++	data = append(data, userData...)
++	digest := sha512.Sum512(data)
+ 	return digest[:]
+ }
+ 
+diff --git a/internal/attestation/initialize/BUILD.bazel b/internal/attestation/initialize/BUILD.bazel
+index 18bbcf260..3c18c0675 100644
+--- a/internal/attestation/initialize/BUILD.bazel
++++ b/internal/attestation/initialize/BUILD.bazel
+@@ -9,7 +9,7 @@ go_library(
+     deps = [
+         "//internal/attestation/measurements",
+         "//internal/attestation/tdx",
+-        "@com_github_edgelesssys_go_tdx_qpl//tdx",
++        "@com_github_Ruoyu-y_go_tdx_qpl//tdx",
+         "@com_github_google_go_tpm//legacy/tpm2",
+     ],
+ )
+diff --git a/internal/attestation/initialize/initialize.go b/internal/attestation/initialize/initialize.go
+index 65bfe349c..008093e8e 100644
+--- a/internal/attestation/initialize/initialize.go
++++ b/internal/attestation/initialize/initialize.go
+@@ -13,9 +13,9 @@ import (
+ 	"errors"
+ 	"io"
+ 
++	tdxapi "github.com/Ruoyu-y/go-tdx-qpl/tdx"
+ 	"github.com/edgelesssys/constellation/v2/internal/attestation/measurements"
+ 	"github.com/edgelesssys/constellation/v2/internal/attestation/tdx"
+-	tdxapi "github.com/edgelesssys/go-tdx-qpl/tdx"
+ 	"github.com/google/go-tpm/legacy/tpm2"
+ )
+ 
+@@ -57,7 +57,11 @@ func IsNodeBootstrapped(openDevice func() (io.ReadWriteCloser, error)) (bool, er
+ }
+ 
+ func tdxIsNodeBootstrapped(handle tdx.Device) (bool, error) {
+-	tdMeasure, err := tdxapi.ReadMeasurements(handle)
++	tdxVersion := tdx.GetDeviceVersion()
++	if tdxVersion == "" {
++		return false, errors.New("Device Version not found")
++	}
++	tdMeasure, err := tdxapi.ReadMeasurements(handle, tdxVersion)
+ 	if err != nil {
+ 		return false, err
+ 	}
+@@ -117,7 +121,9 @@ func tpmIsNodeBootstrapped(tpm io.ReadWriteCloser) (bool, error) {
+ }
+ 
+ func tdxMarkNodeAsBootstrapped(handle tdx.Device, clusterID []byte) error {
+-	return tdxapi.ExtendRTMR(handle, clusterID, measurements.RTMRIndexClusterID)
++	//comment for now as extend RTMR is currently not supported in upstream kernel
++	//return tdxapi.ExtendRTMR(handle, clusterID, measurements.RTMRIndexClusterID)
++	return nil
+ }
+ 
+ func tpmMarkNodeAsBootstrapped(tpm io.ReadWriteCloser, clusterID []byte) error {
+diff --git a/internal/attestation/tdx/BUILD.bazel b/internal/attestation/tdx/BUILD.bazel
+index ddcdf68c7..3352458ba 100644
+--- a/internal/attestation/tdx/BUILD.bazel
++++ b/internal/attestation/tdx/BUILD.bazel
+@@ -14,8 +14,8 @@ go_library(
+         "//internal/attestation/measurements",
+         "//internal/attestation/variant",
+         "//internal/config",
+-        "@com_github_edgelesssys_go_tdx_qpl//tdx",
+-        "@com_github_edgelesssys_go_tdx_qpl//verification",
+-        "@com_github_edgelesssys_go_tdx_qpl//verification/types",
++        "@com_github_Ruoyu-y_go_tdx_qpl//tdx",
++        "@com_github_Ruoyu-y_go_tdx_qpl//verification",
++        "@com_github_Ruoyu-y_go_tdx_qpl//verification/types",
+     ],
+ )
+diff --git a/internal/attestation/tdx/issuer.go b/internal/attestation/tdx/issuer.go
+index 0dadb4b3c..08044012c 100644
+--- a/internal/attestation/tdx/issuer.go
++++ b/internal/attestation/tdx/issuer.go
+@@ -11,9 +11,9 @@ import (
+ 	"encoding/json"
+ 	"fmt"
+ 
++	"github.com/Ruoyu-y/go-tdx-qpl/tdx"
+ 	"github.com/edgelesssys/constellation/v2/internal/attestation"
+ 	"github.com/edgelesssys/constellation/v2/internal/attestation/variant"
+-	"github.com/edgelesssys/go-tdx-qpl/tdx"
+ )
+ 
+ // Issuer is the TDX attestation issuer.
+@@ -50,7 +50,7 @@ func (i *Issuer) Issue(_ context.Context, userData []byte, nonce []byte) (attDoc
+ 	}
+ 	defer handle.Close()
+ 
+-	quote, err := tdx.GenerateQuote(handle, attestation.MakeExtraData(userData, nonce))
++	quote, err := tdx.GenerateQuote(handle, userData, nonce)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("generating quote: %w", err)
+ 	}
+diff --git a/internal/attestation/tdx/tdx.go b/internal/attestation/tdx/tdx.go
+index ea0cb67c4..772487918 100644
+--- a/internal/attestation/tdx/tdx.go
++++ b/internal/attestation/tdx/tdx.go
+@@ -12,10 +12,12 @@ import (
+ 	"io"
+ 	"os"
+ 
++	"github.com/Ruoyu-y/go-tdx-qpl/tdx"
+ 	"github.com/edgelesssys/constellation/v2/internal/attestation/measurements"
+-	"github.com/edgelesssys/go-tdx-qpl/tdx"
+ )
+ 
++var deviceVersion string
++
+ type tdxAttestationDocument struct {
+ 	// RawQuote is the raw TDX quote.
+ 	RawQuote []byte
+@@ -46,7 +48,7 @@ func GetSelectedMeasurements(open OpenFunc, selection []int) (measurements.M, er
+ 	}
+ 	defer handle.Close()
+ 
+-	tdxMeasurements, err := tdx.ReadMeasurements(handle)
++	tdxMeasurements, err := tdx.ReadMeasurements(handle, deviceVersion)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -73,14 +75,27 @@ func Available() bool {
+ 
+ // Open opens the TDX guest device.
+ func Open() (Device, error) {
+-	handle, err := os.Open(tdx.GuestDevice)
++	deviceVersion = tdx.TdxVersion10
++	handle, err := os.Open(tdx.GuestDevice_1_0)
+ 	if err != nil {
+-		return nil, err
++		handle, err = os.Open(tdx.GuestDevice_1_5)
++		if err != nil {
++			deviceVersion = ""
++			return nil, err
++		}
++		deviceVersion = tdx.TdxVersion15
+ 	}
+ 
+ 	return handle, nil
+ }
+ 
++func GetDeviceVersion() string {
++	if deviceVersion != "" {
++		return deviceVersion
++	}
++	return ""
++}
++
+ // IsTDXDevice checks if the given device is a TDX guest device.
+ func IsTDXDevice(device io.ReadWriteCloser) (Device, bool) {
+ 	handle, ok := device.(Device)
+@@ -91,5 +106,5 @@ func IsTDXDevice(device io.ReadWriteCloser) (Device, bool) {
+ 	if !ok {
+ 		return nil, false
+ 	}
+-	return handle, f.Name() == tdx.GuestDevice
++	return handle, f.Name() == tdx.GuestDevice_1_0 || f.Name() == tdx.GuestDevice_1_5
+ }
+diff --git a/internal/attestation/tdx/validator.go b/internal/attestation/tdx/validator.go
+index dcf92d742..0633d9f47 100644
+--- a/internal/attestation/tdx/validator.go
++++ b/internal/attestation/tdx/validator.go
+@@ -12,12 +12,12 @@ import (
+ 	"errors"
+ 	"fmt"
+ 
++	"github.com/Ruoyu-y/go-tdx-qpl/verification"
++	"github.com/Ruoyu-y/go-tdx-qpl/verification/types"
+ 	"github.com/edgelesssys/constellation/v2/internal/attestation"
+ 	"github.com/edgelesssys/constellation/v2/internal/attestation/measurements"
+ 	"github.com/edgelesssys/constellation/v2/internal/attestation/variant"
+ 	"github.com/edgelesssys/constellation/v2/internal/config"
+-	"github.com/edgelesssys/go-tdx-qpl/verification"
+-	"github.com/edgelesssys/go-tdx-qpl/verification/types"
+ )
+ 
+ type tdxVerifier interface {
+diff --git a/internal/attestation/variant/variant.go b/internal/attestation/variant/variant.go
+index e71a51480..4dad1b2cf 100644
+--- a/internal/attestation/variant/variant.go
++++ b/internal/attestation/variant/variant.go
+@@ -56,7 +56,7 @@ var providerAttestationMapping = map[cloudprovider.Provider][]Variant{
+ 	cloudprovider.AWS:       {AWSSEVSNP{}, AWSNitroTPM{}},
+ 	cloudprovider.Azure:     {AzureSEVSNP{}, AzureTDX{}, AzureTrustedLaunch{}},
+ 	cloudprovider.GCP:       {GCPSEVES{}, GCPSEVSNP{}},
+-	cloudprovider.QEMU:      {QEMUVTPM{}},
++	cloudprovider.QEMU:      {QEMUVTPM{}, QEMUTDX{}},
+ 	cloudprovider.OpenStack: {QEMUVTPM{}},
+ }
+ 
+diff --git a/internal/config/config.go b/internal/config/config.go
+index e4b1fa765..a8e209d0c 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -399,6 +399,7 @@ func Default() *Config {
+ 			GCPSEVES:           &GCPSEVES{Measurements: measurements.DefaultsFor(cloudprovider.GCP, variant.GCPSEVES{})},
+ 			GCPSEVSNP:          DefaultForGCPSEVSNP(),
+ 			QEMUVTPM:           &QEMUVTPM{Measurements: measurements.DefaultsFor(cloudprovider.QEMU, variant.QEMUVTPM{})},
++			QEMUTDX:            &QEMUTDX{Measurements: measurements.DefaultsFor(cloudprovider.QEMU, variant.QEMUTDX{})},
+ 		},
+ 	}
+ }
+@@ -591,6 +592,8 @@ func (c *Config) SetAttestation(attestation variant.Variant) {
+ 		c.Attestation = AttestationConfig{GCPSEVSNP: currentAttestationConfigs.GCPSEVSNP}
+ 	case variant.QEMUVTPM:
+ 		c.Attestation = AttestationConfig{QEMUVTPM: currentAttestationConfigs.QEMUVTPM}
++	case variant.QEMUTDX:
++		c.Attestation = AttestationConfig{QEMUTDX: currentAttestationConfigs.QEMUTDX}
+ 	}
+ }
+ 
+@@ -662,6 +665,9 @@ func (c *Config) GetAttestationConfig() AttestationCfg {
+ 	if c.Attestation.QEMUVTPM != nil {
+ 		return c.Attestation.QEMUVTPM
+ 	}
++	if c.Attestation.QEMUTDX != nil {
++		return c.Attestation.QEMUTDX
++	}
+ 	return &DummyCfg{}
+ }
+ 
+diff --git a/internal/config/validation.go b/internal/config/validation.go
+index fab69ff29..238baec29 100644
+--- a/internal/config/validation.go
++++ b/internal/config/validation.go
+@@ -208,6 +208,9 @@ func validateAttestation(sl validator.StructLevel) {
+ 	if attestation.QEMUVTPM != nil {
+ 		attestationCount++
+ 	}
++	if attestation.QEMUTDX != nil {
++		attestationCount++
++	}
+ 
+ 	if attestationCount < 1 {
+ 		sl.ReportError(attestation, "Attestation", "Attestation", "no_attestation", "")
+@@ -250,7 +253,7 @@ func translateNoAttestationError(ut ut.Translator, fe validator.FieldError) stri
+ }
+ 
+ func registerNoAttestationError(ut ut.Translator) error {
+-	return ut.Add("no_attestation", "{0}: No attestation has been defined (requires either awsSEVSNP, awsNitroTPM, azureSEVSNP, azureTDX, azureTrustedLaunch, gcpSEVES, or qemuVTPM)", true)
++	return ut.Add("no_attestation", "{0}: No attestation has been defined (requires either awsSEVSNP, awsNitroTPM, azureSEVSNP, azureTDX, azureTrustedLaunch, gcpSEVES, qemuVTPM or qemuTDX)", true)
+ }
+ 
+ func translateNoDefaultControlPlaneGroupError(ut ut.Translator, fe validator.FieldError) string {
+@@ -373,6 +376,9 @@ func (c *Config) translateMoreThanOneAttestationError(ut ut.Translator, fe valid
+ 	if c.Attestation.QEMUVTPM != nil {
+ 		definedAttestations = append(definedAttestations, "QEMUVTPM")
+ 	}
++	if c.Attestation.QEMUTDX != nil {
++		definedAttestations = append(definedAttestations, "QEMUTDX")
++	}
+ 
+ 	t, _ := ut.T("more_than_one_attestation", fe.Field(), strings.Join(definedAttestations, ", "))
+ 
+diff --git a/terraform/infrastructure/qemu/modules/instance_group/main.tf b/terraform/infrastructure/qemu/modules/instance_group/main.tf
+index 75ecbf2b8..eb55f739e 100644
+--- a/terraform/infrastructure/qemu/modules/instance_group/main.tf
++++ b/terraform/infrastructure/qemu/modules/instance_group/main.tf
+@@ -36,10 +36,10 @@ resource "libvirt_domain" "instance_group" {
+   kernel  = local.kernel
+   initrd  = local.initrd
+   cmdline = local.cmdline
+-  tpm {
+-    backend_type    = "emulator"
+-    backend_version = "2.0"
+-  }
++  //tpm {
++  //  backend_type    = "emulator"
++  //  backend_version = "2.0"
++  //}
+   disk {
+     volume_id = element(libvirt_volume.boot_volume.*.id, count.index)
+   }
+diff --git a/terraform/infrastructure/qemu/modules/instance_group/tdx_domain.xsl b/terraform/infrastructure/qemu/modules/instance_group/tdx_domain.xsl
+index 69257a7b7..77ebc9dd8 100644
+--- a/terraform/infrastructure/qemu/modules/instance_group/tdx_domain.xsl
++++ b/terraform/infrastructure/qemu/modules/instance_group/tdx_domain.xsl
+@@ -41,13 +41,6 @@
+                     <xsl:value-of select="'no'"/>
+                 </xsl:attribute>
+             </xsl:element>
+-            <xsl:element name ="launchSecurity">
+-                <xsl:attribute name="type">
+-                    <xsl:value-of select="'tdx'"/>
+-                </xsl:attribute>
+-                <xsl:element name ="policy"><xsl:text>0x10000001</xsl:text></xsl:element>
+-                <xsl:element name ="Quote-Generation-Service"><xsl:text>vsock:2:4050</xsl:text></xsl:element>
+-            </xsl:element>
+             <xsl:element name ="qemu:commandline" >
+                 <xsl:element name ="qemu:arg">
+                     <xsl:attribute name="value">
+@@ -59,6 +52,26 @@
+                         <xsl:value-of select="'host,-kvm-steal-time'"/>
+                     </xsl:attribute>
+                 </xsl:element>
++                <xsl:element name ="qemu:arg">
++                    <xsl:attribute name="value">
++                        <xsl:value-of select="'-machine'"/>
++                    </xsl:attribute>
++                </xsl:element>
++                <xsl:element name ="qemu:arg">
++                    <xsl:attribute name="value">
++                        <xsl:value-of select="'q35,kernel_irqchip=split,confidential-guest-support=tdx,hpet=off'"/>
++                    </xsl:attribute>
++                </xsl:element>
++                <xsl:element name ="qemu:arg">
++                    <xsl:attribute name="value">
++                        <xsl:value-of select="'-object'"/>
++                    </xsl:attribute>
++                </xsl:element>
++                <xsl:element name ="qemu:arg">
++                    <xsl:attribute name="value">
++                        <xsl:value-of select="'{&quot;qom-type&quot;:&quot;tdx-guest&quot;,&quot;id&quot;:&quot;tdx&quot;,&quot;quote-generation-socket&quot;:{&quot;type&quot;:&quot;vsock&quot;,&quot;cid&quot;:&quot;1&quot;,&quot;port&quot;:&quot;4050&quot;}}'"/>
++                    </xsl:attribute>
++                </xsl:element>
+             </xsl:element>
+         </xsl:copy>
+     </xsl:template>
+@@ -84,9 +97,15 @@
+     </xsl:template>
+     <xsl:template match="/domain/devices/console">
+         <console type="pty">
+-            <target type="virtio" port="1" />
++            <target type="serial" port="0" />
+       </console>
+     </xsl:template>
++    <xsl:template match ="/domain/devices/serial">
++        <serial type='file'>
++            <source path='/var/log/libvirt/qemu/test_constell.log'/>
++            <target port='0'/>
++        </serial>
++    </xsl:template>
+     <xsl:template match="/domain/devices/graphics"></xsl:template>
+     <xsl:template match="/domain/devices/rng"></xsl:template>
+-</xsl:stylesheet>
++</xsl:stylesheet>
+\ No newline at end of file
+diff --git a/terraform/infrastructure/qemu/outputs.tf b/terraform/infrastructure/qemu/outputs.tf
+index 9ac51031c..2d6511ce5 100644
+--- a/terraform/infrastructure/qemu/outputs.tf
++++ b/terraform/infrastructure/qemu/outputs.tf
+@@ -56,11 +56,11 @@ output "validate_constellation_initrd" {
+   description = "Validation placeholder. Do not consume as output."
+ }
+ 
+-output "validate_constellation_cmdline" {
+-  value = null
+-  precondition {
+-    condition     = var.constellation_boot_mode != "direct-linux-boot" || length(var.constellation_cmdline) > 0
+-    error_message = "constellation_cmdline must be set if constellation_boot_mode is 'direct-linux-boot'"
+-  }
+-  description = "Validation placeholder. Do not consume as output."
+-}
++#output "validate_constellation_cmdline" {
++#  value = null
++#  precondition {
++#    condition     = var.constellation_boot_mode != "direct-linux-boot" || length(var.constellation_cmdline) > 0
++#    error_message = "constellation_cmdline must be set if constellation_boot_mode is 'direct-linux-boot'"
++#  }
++#  description = "Validation placeholder. Do not consume as output."
++#}
+-- 
+2.44.0.windows.1
+
